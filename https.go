@@ -432,8 +432,12 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}, writeLimit, readLimit)
-			c := dialer.DialContext
-	
+			//c1 := dialer.DialContext
+			c, err := dialer.Dial(network, u.Host)
+			//c, err := proxy.dial(network, u.Host)
+			if err != nil {
+				return nil, err
+			}
 			c = tls.Client(c, proxy.Tr.TLSClientConfig)
 			connectReq := &http.Request{
 				Method: "CONNECT",
