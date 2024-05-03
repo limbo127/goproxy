@@ -16,6 +16,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/conduitio/bwlimit"
 )
 
 type ConnectActionLiteral int
@@ -425,7 +428,13 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 			u.Host += ":443"
 		}
 		return func(network, addr string) (net.Conn, error) {
-			c, err := proxy.dial(network, u.Host)
+			dialer := bwlimit.NewDialer(&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}, writeLimit, readLimit)
+			c, err := dialer.DialContext
+
+			//	c, err := proxy.dial(network, u.Host)
 			if err != nil {
 				return nil, err
 			}

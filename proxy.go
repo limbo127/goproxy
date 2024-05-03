@@ -10,6 +10,17 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
+	"time"
+
+	"github.com/conduitio/bwlimit"
+)
+
+const (
+	addr        = "http://localhost:8080/echo"
+	requestSize = 20 * bwlimit.KB
+
+	readLimit  = bwlimit.MiB    // read limit is 1048576 B/s
+	writeLimit = 4 * bwlimit.KB // write limit is 4000 B/s
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -209,7 +220,8 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // NewProxyHttpServer creates and returns a proxy server, logging to stderr by default
 func NewProxyHttpServer() *ProxyHttpServer {
-	fmt.Println("NewProxyHttpServer by nicolas ")
+	fmt.Println("NewProxyHttpServer by nicolas 001")
+
 	proxy := ProxyHttpServer{
 		Logger:        log.New(os.Stderr, "", log.LstdFlags),
 		reqHandlers:   []ReqHandler{},
