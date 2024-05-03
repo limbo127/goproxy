@@ -10,7 +10,6 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
-	"time"
 
 	"github.com/conduitio/bwlimit"
 )
