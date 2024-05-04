@@ -23,6 +23,19 @@ type ProxyCtx struct {
 	Session   int64
 	certStore CertStorage
 	Proxy     *ProxyHttpServer
+	// a atomic maps key is a string of host, and value a struct with writelimit and readlimit int64
+	// for that host
+	//
+	//  proxy.OnRequest().DoFunc(func(ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	//  	ctx.SetDownstreamBandwidth("example.com", 1024, 1024)
+	//  	return ctx.Req, nil
+	//  })
+	//
+	//  proxy.OnResponse().DoFunc(func(ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	//  	ctx.SetDownstreamBandwidth("example.com", 0, 0)
+	//  	return ctx.Req, ctx.Resp
+	//  })
+
 }
 
 type RoundTripper interface {

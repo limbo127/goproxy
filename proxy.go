@@ -14,15 +14,17 @@ import (
 	"github.com/conduitio/bwlimit"
 )
 
-const (
-	addr        = "http://localhost:8080/echo"
-	requestSize = 20 * bwlimit.KB
-
-	readLimit  = bwlimit.MiB    // read limit is 1048576 B/s
-	writeLimit = 4 * bwlimit.KB // write limit is 4000 B/s
-)
-
 // The basic proxy type. Implements http.Handler.
+type Bandwidth struct {
+	Host 	 string
+	WriteLimit bwlimit.Byte
+	ReadLimit  bwlimit.Byte
+	Crontab    string
+}
+
+
+
+
 type ProxyHttpServer struct {
 	// session variable must be aligned in i386
 	// see http://golang.org/src/pkg/sync/atomic/doc.go#L41
@@ -43,6 +45,8 @@ type ProxyHttpServer struct {
 	ConnectDialWithReq func(req *http.Request, network string, addr string) (net.Conn, error)
 	CertStore          CertStorage
 	KeepHeader         bool
+	// a map of upstream bandwidth limits
+	StreamBandwidth map[string]Bandwidth
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)
@@ -219,8 +223,13 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // NewProxyHttpServer creates and returns a proxy server, logging to stderr by default
 func NewProxyHttpServer() *ProxyHttpServer {
-	fmt.Println("NewProxyHttpServer by nicolas 001")
-
+	fmt.Println("NewProxyHttpServer by nicolas 007")
+	/*
+		dialer := bwlimit.NewDialer(&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}, 1000*bwlimit.KB, 100*bwlimit.KB)
+	*/
 	proxy := ProxyHttpServer{
 		Logger:        log.New(os.Stderr, "", log.LstdFlags),
 		reqHandlers:   []ReqHandler{},
