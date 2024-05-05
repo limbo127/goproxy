@@ -14,16 +14,18 @@ import (
 	"github.com/conduitio/bwlimit"
 )
 
-// The basic proxy type. Implements http.Handler.
-type Bandwidth struct {
-	Host 	 string
-	WriteLimit bwlimit.Byte
-	ReadLimit  bwlimit.Byte
-	Crontab    string
+// BandwidthConfiguration represents a host and its associated bandwidth limits.
+// It allows multiple configurations (write limit, read limit, crontab) per host.
+type BandwidthLimit struct {
+	WriteLimit bwlimit.Byte // Maximum bytes per second for writing
+	ReadLimit  bwlimit.Byte // Maximum bytes per second for reading
+	Crontab    string       // Scheduling information for when these limits apply
 }
 
-
-
+type BandwidthConfiguration struct {
+	Host   string           // The host to which these bandwidth settings apply
+	Limits []BandwidthLimit // The bandwidth limits for this host
+}
 
 type ProxyHttpServer struct {
 	// session variable must be aligned in i386
@@ -46,7 +48,7 @@ type ProxyHttpServer struct {
 	CertStore          CertStorage
 	KeepHeader         bool
 	// a map of upstream bandwidth limits
-	StreamBandwidth map[string]Bandwidth
+	StreamBandwidth map[string]BandwidthConfiguration
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)

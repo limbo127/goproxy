@@ -25,11 +25,6 @@ import (
 type ConnectActionLiteral int
 
 const (
-	readLimit  = 1 * bwlimit.KB // read limit is 1048576 B/s
-	writeLimit = 10             // write limit is 4000 B/s
-)
-
-const (
 	ConnectAccept = iota
 	ConnectReject
 	ConnectMitm
@@ -106,6 +101,15 @@ type halfClosable interface {
 
 var _ halfClosable = (*net.TCPConn)(nil)
 
+func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool) {
+	for _, value := range band.Limits {
+		if ParseAndNextStart(value.Crontab) >= time.Now().Unix() && ParseAndNextStart(value.Crontab) <= time.Now().Add(1*time.Minute).Unix() {
+			return value, true
+		}
+	}
+	return BandwidthLimit{}, false
+}
+
 func ParseAndNextStart(crontab string) int64 {
 
 	if location, err := time.LoadLocation("UTC"); err == nil {
@@ -158,17 +162,17 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		var err error
 
 		value, ok := proxy.StreamBandwidth[host]
-		fmt.Printf("\n====Host: %s , map :%v  ( value/ok) %v %v", host, proxy.StreamBandwidth, value, ok)
+		fmt.Printf("\n==/==Host: %s , map :%v  ( value/ok) %v %v", host, proxy.StreamBandwidth, value, ok)
 
 		if ok {
 			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
-			if ParseAndNextStart(value.Crontab) >= time.Now().Unix() && ParseAndNextStart(value.Crontab) <= time.Now().Add(1*time.Minute).Unix() {
+			if limit, b := FindRightBandwidthLimit(value); b {
 				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 				// value is a struct with writelimit and readlimit int64
-				targetSiteCon = bwlimit.NewConn(targetSiteCon, value.WriteLimit, value.ReadLimit)
-				fmt.Printf("\n====Set bandwidth limit for host %s, writeLimit: %d, readLimit: %d", host, value.WriteLimit, value.ReadLimit)
+				targetSiteCon = bwlimit.NewConn(targetSiteCon, limit.WriteLimit, limit.ReadLimit)
+				fmt.Printf("\n====Set bandwidth limit for host %s, writeLimit: %d, readLimit: %d", host, limit.WriteLimit, limit.ReadLimit)
 			} else {
-				fmt.Printf("\n====Not set bandwidth limit for host %s because of bad crontab : %v", host, time.Unix(ParseAndNextStart(value.Crontab),0))
+				fmt.Printf("\n====Not set bandwidth limit for host %s because of not applicable crontab ", host)
 				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 			}
 		} else {
