@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -225,7 +224,6 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // NewProxyHttpServer creates and returns a proxy server, logging to stderr by default
 func NewProxyHttpServer() *ProxyHttpServer {
-	fmt.Println("NewProxyHttpServer by nicolas 007")
 	/*
 		dialer := bwlimit.NewDialer(&net.Dialer{
 			Timeout:   30 * time.Second,

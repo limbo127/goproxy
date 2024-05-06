@@ -24,6 +24,16 @@ import (
 
 type ConnectActionLiteral int
 
+// maps of struct of mutex and int64 to count the number of connection initiated during a period of time
+type ConnMutex struct {
+	mutex  *sync.Mutex
+	count  int
+	period time.Time
+}
+
+var mapConnMutex = make(map[string]ConnMutex)
+var gconnMutex sync.Mutex // mutex to protect mapConnMutex
+
 const (
 	ConnectAccept = iota
 	ConnectReject
@@ -102,12 +112,49 @@ type halfClosable interface {
 var _ halfClosable = (*net.TCPConn)(nil)
 
 func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool) {
+	gconnMutex.Lock()
+	connMutex, ok := mapConnMutex[band.Host]
+	gconnMutex.Unlock()
+	if !ok {
+		connMutex = ConnMutex{
+			mutex:  &sync.Mutex{},
+			count:  1,
+			period: time.Now(),
+		}
+		mapConnMutex[band.Host] = connMutex
+	} else {
+		if time.Since(connMutex.period) > 1*time.Second {
+			connMutex.count = 0
+			connMutex.period = time.Now()
+		}
+		connMutex.mutex.Lock()
+		connMutex.count++
+		mapConnMutex[band.Host] = connMutex
+		connMutex.mutex.Unlock()
+	}
+	var result BandwidthLimit
 	for _, value := range band.Limits {
 		if ParseAndNextStart(value.Crontab) >= time.Now().Unix() && ParseAndNextStart(value.Crontab) <= time.Now().Add(1*time.Minute).Unix() {
-			return value, true
+			result = value
+			break
+			//return value, true
 		}
 	}
-	return BandwidthLimit{}, false
+	if result.Crontab == "" {
+		return BandwidthLimit{}, false
+	}
+	time.Sleep(1 * time.Second)
+	// create a new  BandwidthLimitwith BandwidthLimit.WriteLimit and BandwidthLimit.ReadLimit divide by the connMutex.count
+	// return the new BandwidthLimit
+	writeLimit := result.WriteLimit
+	readLimit := result.ReadLimit
+	if connMutexN, ok := mapConnMutex[band.Host]; ok {
+		writeLimit = result.WriteLimit / bwlimit.Byte(connMutexN.count)
+		readLimit = result.ReadLimit / bwlimit.Byte(connMutexN.count)
+	}
+
+	return BandwidthLimit{WriteLimit: writeLimit, ReadLimit: readLimit}, true
+
 }
 
 func ParseAndNextStart(crontab string) int64 {
@@ -139,16 +186,14 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		panic("Cannot hijack connection " + e.Error())
 	}
 
-	ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
+	//ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
 	todo, host := OkConnect, r.URL.Host
-	for i, h := range proxy.httpsHandlers {
-
+	for _, h := range proxy.httpsHandlers {
 		newtodo, newhost := h.HandleConnect(host, ctx)
-
 		// If found a result, break the loop immediately
 		if newtodo != nil {
 			todo, host = newtodo, newhost
-			ctx.Logf("on %dth handler: %v %s", i, todo, host)
+			//ctx.Logf("on %dth handler: %v %s", i, todo, host)
 			break
 		}
 	}
@@ -157,12 +202,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		if !hasPort.MatchString(host) {
 			host += ":80"
 		}
-		// if host contain nperf.net, not limit bandwidth
 		var targetSiteCon net.Conn
 		var err error
-
+		ctx.Logf("====Connect to host %s", host)
 		value, ok := proxy.StreamBandwidth[host]
-		fmt.Printf("\n==/==Host: %s , map :%v  ( value/ok) %v %v", host, proxy.StreamBandwidth, value, ok)
 
 		if ok {
 			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
@@ -170,9 +213,9 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 				// value is a struct with writelimit and readlimit int64
 				targetSiteCon = bwlimit.NewConn(targetSiteCon, limit.WriteLimit, limit.ReadLimit)
-				fmt.Printf("\n====Set bandwidth limit for host %s, writeLimit: %d, readLimit: %d", host, limit.WriteLimit, limit.ReadLimit)
+				ctx.Logf("====Set bandwidth limit for host %s, writeLimit: %d, readLimit: %d", host, limit.WriteLimit, limit.ReadLimit)
 			} else {
-				fmt.Printf("\n====Not set bandwidth limit for host %s because of not applicable crontab ", host)
+				ctx.Logf("====Not set bandwidth limit for host %s because of not applicable crontab ", host)
 				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 			}
 		} else {
@@ -183,7 +226,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			httpError(proxyClient, ctx, err)
 			return
 		}
-		ctx.Logf("Accepting CONNECT to %s", host)
+		//ctx.Logf("Accepting CONNECT to %s", host)
 		proxyClient.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
 
 		proxyClientTCP, clientOK := proxyClient.(halfClosable)
@@ -402,7 +445,7 @@ func copyOrWarn(ctx *ProxyCtx, dst io.Writer, src io.Reader, wg *sync.WaitGroup)
 
 func copyAndCloseS(ctx *ProxyCtx, dst net.Conn, src net.Conn) {
 	if _, err := io.Copy(dst, src); err != nil {
-		ctx.Warnf("<=====Error copying to client: %s", err)
+		//ctx.Warnf("<=====Error copying to client: %s", err)
 	}
 
 	// test if dst is a bwlimit.Conn
@@ -426,7 +469,7 @@ func copyAndCloseS(ctx *ProxyCtx, dst net.Conn, src net.Conn) {
 
 func copyAndClose(ctx *ProxyCtx, dst, src halfClosable) {
 	if _, err := io.Copy(dst, src); err != nil {
-		ctx.Warnf("<=====Error copying to client: %s", err)
+		//ctx.Warnf("<=====Error copying to client: %s", err)
 	}
 
 	dst.CloseWrite()
