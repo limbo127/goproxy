@@ -114,7 +114,7 @@ var _ halfClosable = (*net.TCPConn)(nil)
 func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool) {
 	gconnMutex.Lock()
 	connMutex, ok := mapConnMutex[band.Host]
-	gconnMutex.Unlock()
+	defer gconnMutex.Unlock()
 	if !ok {
 		connMutex = ConnMutex{
 			mutex:  &sync.Mutex{},
@@ -127,10 +127,10 @@ func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool)
 			connMutex.count = 0
 			connMutex.period = time.Now()
 		}
-		connMutex.mutex.Lock()
+		//connMutex.mutex.Lock()
 		connMutex.count++
 		mapConnMutex[band.Host] = connMutex
-		connMutex.mutex.Unlock()
+		//connMutex.mutex.Unlock()
 	}
 	var result BandwidthLimit
 	for _, value := range band.Limits {
@@ -202,10 +202,23 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		if !hasPort.MatchString(host) {
 			host += ":80"
 		}
+		var _host string
 		var targetSiteCon net.Conn
 		var err error
 		ctx.Logf("====Connect to host %s", host)
-		value, ok := proxy.StreamBandwidth[host]
+
+		// for all key of proxy.StreamBandwidth , create a regexp of the map key to match the host
+		for key := range proxy.StreamBandwidth {
+			if re, err := regexp.Compile(key); err == nil {
+				if re.MatchString(host) {
+					_host = key
+					ctx.Logf("====Find a match host %s for key:%v", host, key)
+					break
+				}
+			}
+		}
+
+		value, ok := proxy.StreamBandwidth[_host]
 
 		if ok {
 			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
