@@ -111,26 +111,30 @@ type halfClosable interface {
 
 var _ halfClosable = (*net.TCPConn)(nil)
 
-func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool) {
+func FindRightBandwidthLimit(band BandwidthConfiguration, _host string) (BandwidthLimit, bool) {
 	gconnMutex.Lock()
 	connMutex, ok := mapConnMutex[band.Host]
-	defer gconnMutex.Unlock()
+	gconnMutex.Unlock()
 	if !ok {
 		connMutex = ConnMutex{
 			mutex:  &sync.Mutex{},
 			count:  1,
 			period: time.Now(),
 		}
+		gconnMutex.Lock()
 		mapConnMutex[band.Host] = connMutex
+		gconnMutex.Unlock()
 	} else {
-		if time.Since(connMutex.period) > 1*time.Second {
+		if time.Since(connMutex.period) > 10*time.Second {
 			connMutex.count = 0
 			connMutex.period = time.Now()
 		}
-		//connMutex.mutex.Lock()
+		connMutex.mutex.Lock()
 		connMutex.count++
+		gconnMutex.Lock()
 		mapConnMutex[band.Host] = connMutex
-		//connMutex.mutex.Unlock()
+		gconnMutex.Unlock()
+		connMutex.mutex.Unlock()
 	}
 	var result BandwidthLimit
 	for _, value := range band.Limits {
@@ -148,11 +152,15 @@ func FindRightBandwidthLimit(band BandwidthConfiguration) (BandwidthLimit, bool)
 	// return the new BandwidthLimit
 	writeLimit := result.WriteLimit
 	readLimit := result.ReadLimit
+	gconnMutex.Lock()
+	defer gconnMutex.Unlock()
 	if connMutexN, ok := mapConnMutex[band.Host]; ok {
 		writeLimit = result.WriteLimit / bwlimit.Byte(connMutexN.count)
 		readLimit = result.ReadLimit / bwlimit.Byte(connMutexN.count)
+		
 	}
 
+	//fmt.Printf("\n====##### host : %v / %+v nb connect // : %v , bande :%v / %v \n", _host, band, connMutex.count, writeLimit, readLimit)
 	return BandwidthLimit{WriteLimit: writeLimit, ReadLimit: readLimit}, true
 
 }
@@ -212,17 +220,18 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			if re, err := regexp.Compile(key); err == nil {
 				if re.MatchString(host) {
 					_host = key
-					ctx.Logf("====Find a match host %s for key:%v", host, key)
+					//ctx.Logf("====Find a match host %s for key:%v", host, key)
 					break
 				}
 			}
 		}
 
 		value, ok := proxy.StreamBandwidth[_host]
-
+		// map with key as host and targetSiteCon as values , if entry exist reuse it , else record into map
+		
 		if ok {
 			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
-			if limit, b := FindRightBandwidthLimit(value); b {
+			if limit, b := FindRightBandwidthLimit(value, host); b {
 				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 				// value is a struct with writelimit and readlimit int64
 				targetSiteCon = bwlimit.NewConn(targetSiteCon, limit.WriteLimit, limit.ReadLimit)
@@ -234,6 +243,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		} else {
 			targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 		}
+
+       
+
+
 		if err != nil {
 			ctx.Warnf("Error dialing to %s: %s", host, err.Error())
 			httpError(proxyClient, ctx, err)
