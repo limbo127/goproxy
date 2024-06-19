@@ -114,28 +114,29 @@ var _ halfClosable = (*net.TCPConn)(nil)
 func FindRightBandwidthLimit(band BandwidthConfiguration, _host string) (BandwidthLimit, bool) {
 	gconnMutex.Lock()
 	connMutex, ok := mapConnMutex[band.Host]
-	gconnMutex.Unlock()
+	//gconnMutex.Unlock()
 	if !ok {
 		connMutex = ConnMutex{
 			mutex:  &sync.Mutex{},
 			count:  1,
 			period: time.Now(),
 		}
-		gconnMutex.Lock()
+		//	gconnMutex.Lock()
 		mapConnMutex[band.Host] = connMutex
-		gconnMutex.Unlock()
+		//	gconnMutex.Unlock()
 	} else {
 		if time.Since(connMutex.period) > 10*time.Second {
 			connMutex.count = 0
 			connMutex.period = time.Now()
 		}
-		connMutex.mutex.Lock()
+		//connMutex.mutex.Lock()
 		connMutex.count++
-		gconnMutex.Lock()
+		//gconnMutex.Lock()
 		mapConnMutex[band.Host] = connMutex
-		gconnMutex.Unlock()
-		connMutex.mutex.Unlock()
+		//gconnMutex.Unlock()
+		//connMutex.mutex.Unlock()
 	}
+	gconnMutex.Unlock()
 	var result BandwidthLimit
 	for _, value := range band.Limits {
 		if ParseAndNextStart(value.Crontab) >= time.Now().Unix() && ParseAndNextStart(value.Crontab) <= time.Now().Add(1*time.Minute).Unix() {
@@ -157,7 +158,7 @@ func FindRightBandwidthLimit(band BandwidthConfiguration, _host string) (Bandwid
 	if connMutexN, ok := mapConnMutex[band.Host]; ok {
 		writeLimit = result.WriteLimit / bwlimit.Byte(connMutexN.count)
 		readLimit = result.ReadLimit / bwlimit.Byte(connMutexN.count)
-		
+
 	}
 
 	//fmt.Printf("\n====##### host : %v / %+v nb connect // : %v , bande :%v / %v \n", _host, band, connMutex.count, writeLimit, readLimit)
@@ -228,7 +229,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 		value, ok := proxy.StreamBandwidth[_host]
 		// map with key as host and targetSiteCon as values , if entry exist reuse it , else record into map
-		
+
 		if ok {
 			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
 			if limit, b := FindRightBandwidthLimit(value, host); b {
@@ -243,9 +244,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		} else {
 			targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
 		}
-
-       
-
 
 		if err != nil {
 			ctx.Warnf("Error dialing to %s: %s", host, err.Error())
