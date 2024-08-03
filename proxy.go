@@ -46,8 +46,11 @@ type ProxyHttpServer struct {
 	ConnectDialWithReq func(req *http.Request, network string, addr string) (net.Conn, error)
 	CertStore          CertStorage
 	KeepHeader         bool
+
 	// a map of upstream bandwidth limits
 	StreamBandwidth map[string]BandwidthConfiguration
+	AllowHTTP2         bool
+
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)

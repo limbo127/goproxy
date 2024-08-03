@@ -1,5 +1,6 @@
 module github.com/elazarl/goproxy
 
+
 go 1.22.2
 
 require (
@@ -13,3 +14,4 @@ require (
 	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
 	golang.org/x/time v0.5.0 // indirect
 )
+
