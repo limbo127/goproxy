@@ -204,7 +204,8 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// This will prevent problems with HEAD requests where there's no body, yet,
 		// the Content-Length header should be set.
 		if origBody != resp.Body {
-			resp.Header.Del("Content-Length")
+			ctx.Logf("Removing Content-Length because of body change / NOT .. Nicolas Prochazka vs goproxy ?? %v / %v ",origBody,resp.Body)
+			//resp.Header.Del("Content-Length")
 		}
 		copyHeaders(w.Header(), resp.Header, proxy.KeepDestinationHeaders)
 		w.WriteHeader(resp.StatusCode)
