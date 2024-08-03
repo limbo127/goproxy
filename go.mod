@@ -1,10 +1,17 @@
 module github.com/elazarl/goproxy
 
-go 1.18
+
+go 1.22.2
 
 require (
-	github.com/elazarl/goproxy/ext v0.0.0-20190711103511-473e67f1d7d2
-	golang.org/x/net v0.26.0
+	github.com/conduitio/bwlimit v0.1.0
+	github.com/elazarl/goproxy/ext v0.0.0-20231117061959-7cc037d33fb5
 )
 
-require golang.org/x/text v0.16.0 // indirect
+//replace github.com/conduitio/bwlimit => github.com/limbo127/bwlimit v0.0.1 // indirect
+
+require (
+	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
+	golang.org/x/time v0.5.0 // indirect
+)
+

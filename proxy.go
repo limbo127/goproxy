@@ -9,9 +9,23 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
+
+	"github.com/conduitio/bwlimit"
 )
 
-// The basic proxy type. Implements http.Handler.
+// BandwidthConfiguration represents a host and its associated bandwidth limits.
+// It allows multiple configurations (write limit, read limit, crontab) per host.
+type BandwidthLimit struct {
+	WriteLimit bwlimit.Byte // Maximum bytes per second for writing
+	ReadLimit  bwlimit.Byte // Maximum bytes per second for reading
+	Crontab    string       // Scheduling information for when these limits apply
+}
+
+type BandwidthConfiguration struct {
+	Host   string           // The host to which these bandwidth settings apply
+	Limits []BandwidthLimit // The bandwidth limits for this host
+}
+
 type ProxyHttpServer struct {
 	// session variable must be aligned in i386
 	// see http://golang.org/src/pkg/sync/atomic/doc.go#L41
@@ -32,7 +46,11 @@ type ProxyHttpServer struct {
 	ConnectDialWithReq func(req *http.Request, network string, addr string) (net.Conn, error)
 	CertStore          CertStorage
 	KeepHeader         bool
+
+	// a map of upstream bandwidth limits
+	StreamBandwidth map[string]BandwidthConfiguration
 	AllowHTTP2         bool
+
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)
@@ -189,7 +207,8 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// This will prevent problems with HEAD requests where there's no body, yet,
 		// the Content-Length header should be set.
 		if origBody != resp.Body {
-			resp.Header.Del("Content-Length")
+			ctx.Logf("Removing Content-Length because of body change / NOT .. Nicolas Prochazka vs goproxy ?? %v / %v ",origBody,resp.Body)
+			//resp.Header.Del("Content-Length")
 		}
 		copyHeaders(w.Header(), resp.Header, proxy.KeepDestinationHeaders)
 		w.WriteHeader(resp.StatusCode)
@@ -209,6 +228,12 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // NewProxyHttpServer creates and returns a proxy server, logging to stderr by default
 func NewProxyHttpServer() *ProxyHttpServer {
+	/*
+		dialer := bwlimit.NewDialer(&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}, 1000*bwlimit.KB, 100*bwlimit.KB)
+	*/
 	proxy := ProxyHttpServer{
 		Logger:        log.New(os.Stderr, "", log.LstdFlags),
 		reqHandlers:   []ReqHandler{},

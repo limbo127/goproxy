@@ -16,9 +16,23 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/conduitio/bwlimit"
+	"github.com/gorhill/cronexpr"
 )
 
 type ConnectActionLiteral int
+
+// maps of struct of mutex and int64 to count the number of connection initiated during a period of time
+type ConnMutex struct {
+	mutex  *sync.Mutex
+	count  int
+	period time.Time
+}
+
+var mapConnMutex = make(map[string]ConnMutex)
+var gconnMutex sync.Mutex // mutex to protect mapConnMutex
 
 const (
 	ConnectAccept = iota
@@ -86,7 +100,6 @@ func (proxy *ProxyHttpServer) connectDial(ctx *ProxyCtx, network, addr string) (
 	if proxy.ConnectDialWithReq != nil {
 		return proxy.ConnectDialWithReq(ctx.Req, network, addr)
 	}
-
 	return proxy.ConnectDial(network, addr)
 }
 
@@ -98,7 +111,78 @@ type halfClosable interface {
 
 var _ halfClosable = (*net.TCPConn)(nil)
 
+func FindRightBandwidthLimit(band BandwidthConfiguration, _host string) (BandwidthLimit, bool) {
+	gconnMutex.Lock()
+	connMutex, ok := mapConnMutex[band.Host]
+	//gconnMutex.Unlock()
+	if !ok {
+		connMutex = ConnMutex{
+			mutex:  &sync.Mutex{},
+			count:  1,
+			period: time.Now(),
+		}
+		//	gconnMutex.Lock()
+		mapConnMutex[band.Host] = connMutex
+		//	gconnMutex.Unlock()
+	} else {
+		if time.Since(connMutex.period) > 10*time.Second {
+			connMutex.count = 0
+			connMutex.period = time.Now()
+		}
+		//connMutex.mutex.Lock()
+		connMutex.count++
+		//gconnMutex.Lock()
+		mapConnMutex[band.Host] = connMutex
+		//gconnMutex.Unlock()
+		//connMutex.mutex.Unlock()
+	}
+	gconnMutex.Unlock()
+	var result BandwidthLimit
+	for _, value := range band.Limits {
+		if ParseAndNextStart(value.Crontab) >= time.Now().Unix() && ParseAndNextStart(value.Crontab) <= time.Now().Add(1*time.Minute).Unix() {
+			result = value
+			break
+			//return value, true
+		}
+	}
+	if result.Crontab == "" {
+		return BandwidthLimit{}, false
+	}
+	time.Sleep(1 * time.Second)
+	// create a new  BandwidthLimitwith BandwidthLimit.WriteLimit and BandwidthLimit.ReadLimit divide by the connMutex.count
+	// return the new BandwidthLimit
+	writeLimit := result.WriteLimit
+	readLimit := result.ReadLimit
+	gconnMutex.Lock()
+	defer gconnMutex.Unlock()
+	if connMutexN, ok := mapConnMutex[band.Host]; ok {
+		writeLimit = result.WriteLimit / bwlimit.Byte(connMutexN.count)
+		readLimit = result.ReadLimit / bwlimit.Byte(connMutexN.count)
+
+	}
+
+	//fmt.Printf("\n====##### host : %v / %+v nb connect // : %v , bande :%v / %v \n", _host, band, connMutex.count, writeLimit, readLimit)
+	return BandwidthLimit{WriteLimit: writeLimit, ReadLimit: readLimit}, true
+
+}
+
+func ParseAndNextStart(crontab string) int64 {
+
+	if location, err := time.LoadLocation("UTC"); err == nil {
+		now := time.Now()
+		localizedNow := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), 0, 0, location)
+		_, offset := localizedNow.Zone()
+		if crontab != "" {
+			nextTime := cronexpr.MustParse(crontab).Next(time.Now())
+			utcTime := nextTime.Add((-time.Duration(offset)) * time.Second)
+			return (utcTime.Unix())
+		}
+	}
+	return 0
+}
+
 func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request) {
+
 	ctx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, certStore: proxy.CertStore}
 
 	hij, ok := w.(http.Hijacker)
@@ -111,15 +195,14 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		panic("Cannot hijack connection " + e.Error())
 	}
 
-	ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
+	//ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
 	todo, host := OkConnect, r.URL.Host
-	for i, h := range proxy.httpsHandlers {
+	for _, h := range proxy.httpsHandlers {
 		newtodo, newhost := h.HandleConnect(host, ctx)
-
 		// If found a result, break the loop immediately
 		if newtodo != nil {
 			todo, host = newtodo, newhost
-			ctx.Logf("on %dth handler: %v %s", i, todo, host)
+			//ctx.Logf("on %dth handler: %v %s", i, todo, host)
 			break
 		}
 	}
@@ -128,20 +211,53 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		if !hasPort.MatchString(host) {
 			host += ":80"
 		}
-		targetSiteCon, err := proxy.connectDial(ctx, "tcp", host)
+		var _host string
+		var targetSiteCon net.Conn
+		var err error
+		ctx.Logf("====Connect to host %s", host)
+
+		// for all key of proxy.StreamBandwidth , create a regexp of the map key to match the host
+		for key := range proxy.StreamBandwidth {
+			if re, err := regexp.Compile(key); err == nil {
+				if re.MatchString(host) {
+					_host = key
+					//ctx.Logf("====Find a match host %s for key:%v", host, key)
+					break
+				}
+			}
+		}
+
+		value, ok := proxy.StreamBandwidth[_host]
+		// map with key as host and targetSiteCon as values , if entry exist reuse it , else record into map
+
+		if ok {
+			// current unixTime in value.Crontab must be equal with 1 minutes delay with ciurrent time
+			if limit, b := FindRightBandwidthLimit(value, host); b {
+				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
+				// value is a struct with writelimit and readlimit int64
+				targetSiteCon = bwlimit.NewConn(targetSiteCon, limit.WriteLimit, limit.ReadLimit)
+				ctx.Logf("====Set bandwidth limit for host %s, writeLimit: %d, readLimit: %d", host, limit.WriteLimit, limit.ReadLimit)
+			} else {
+				ctx.Logf("====Not set bandwidth limit for host %s because of not applicable crontab ", host)
+				targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
+			}
+		} else {
+			targetSiteCon, err = proxy.connectDial(ctx, "tcp", host)
+		}
+
 		if err != nil {
 			ctx.Warnf("Error dialing to %s: %s", host, err.Error())
 			httpError(proxyClient, ctx, err)
 			return
 		}
-		ctx.Logf("Accepting CONNECT to %s", host)
+		//ctx.Logf("Accepting CONNECT to %s", host)
 		proxyClient.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
 
-		targetTCP, targetOK := targetSiteCon.(halfClosable)
 		proxyClientTCP, clientOK := proxyClient.(halfClosable)
-		if targetOK && clientOK {
-			go copyAndClose(ctx, targetTCP, proxyClientTCP)
-			go copyAndClose(ctx, proxyClientTCP, targetTCP)
+
+		if clientOK {
+			go copyAndCloseS(ctx, targetSiteCon, proxyClientTCP)
+			go copyAndCloseS(ctx, proxyClientTCP, targetSiteCon)
 		} else {
 			go func() {
 				var wg sync.WaitGroup
@@ -370,14 +486,38 @@ func httpError(w io.WriteCloser, ctx *ProxyCtx, err error) {
 
 func copyOrWarn(ctx *ProxyCtx, dst io.Writer, src io.Reader, wg *sync.WaitGroup) {
 	if _, err := io.Copy(dst, src); err != nil {
-		ctx.Warnf("Error copying to client: %s", err)
+		ctx.Warnf("===>Error copying to client: %s", err)
 	}
 	wg.Done()
 }
 
+func copyAndCloseS(ctx *ProxyCtx, dst net.Conn, src net.Conn) {
+	if _, err := io.Copy(dst, src); err != nil {
+		//ctx.Warnf("<=====Error copying to client: %s", err)
+	}
+
+	// test if dst is a bwlimit.Conn
+	if _, ok := dst.(*bwlimit.Conn); ok {
+		dst.(*bwlimit.Conn).Conn.(*net.TCPConn).CloseWrite()
+	}
+	// test if src is a bwlimit.Conn
+	if _, ok := src.(*bwlimit.Conn); ok {
+		src.(*bwlimit.Conn).Conn.(*net.TCPConn).CloseRead()
+	}
+	// test if dst is a halfClosable
+	if dst, ok := dst.(halfClosable); ok {
+		dst.CloseWrite()
+	}
+	// test if src is a halfClosable
+	if src, ok := src.(halfClosable); ok {
+		src.CloseRead()
+	}
+
+}
+
 func copyAndClose(ctx *ProxyCtx, dst, src halfClosable) {
 	if _, err := io.Copy(dst, src); err != nil {
-		ctx.Warnf("Error copying to client: %s", err)
+		//ctx.Warnf("<=====Error copying to client: %s", err)
 	}
 
 	dst.CloseWrite()
