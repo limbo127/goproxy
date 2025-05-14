@@ -221,9 +221,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			if re, err := regexp.Compile(key); err == nil {
 				if re.MatchString(host) {
 					_host = key
-					//ctx.Logf("====Find a match host %s for key:%v", host, key)
+					ctx.Logf("====Find a match host %s for key:%v", host, key)
 					break
 				}
+			} else {
+				ctx.Logf("====Error compiling regexp %s for key:%v", err, key)
 			}
 		}
 

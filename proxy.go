@@ -204,7 +204,7 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// This will prevent problems with HEAD requests where there's no body, yet,
 		// the Content-Length header should be set.
 		if origBody != resp.Body {
-			ctx.Logf("Removing Content-Length because of body change / NOT .. Nicolas Prochazka vs goproxy ?? %v / %v ",origBody,resp.Body)
+			ctx.Logf("Removing Content-Length because of body change / NOT .. Nicolas Prochazka vs goproxy ?? %v / %v ", origBody, resp.Body)
 			//resp.Header.Del("Content-Length")
 		}
 		copyHeaders(w.Header(), resp.Header, proxy.KeepDestinationHeaders)
@@ -221,6 +221,15 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		ctx.Logf("Copied %v bytes to client error=%v", nr, err)
 	}
+}
+
+// Add this helper method to ProxyHttpServer to list all bandwidth configuration keys
+func (proxy *ProxyHttpServer) StreamBandwidthKeys() []string {
+	keys := make([]string, 0, len(proxy.StreamBandwidth))
+	for k := range proxy.StreamBandwidth {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // NewProxyHttpServer creates and returns a proxy server, logging to stderr by default
